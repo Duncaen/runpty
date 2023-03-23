@@ -430,8 +430,11 @@ static bool term_changed;
 static bool
 term_restore(int fd)
 {
+	if (!term_changed)
+		return true;
 	if (tcsetattr_nobg(fd, TCSASOFT|TCSADRAIN, &oterm) != 0)
 		return false;
+	term_changed = false;
 	return true;
 }
 
