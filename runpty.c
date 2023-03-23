@@ -203,15 +203,19 @@ selfpipe_read(void)
 static int
 monitor_handle_signal(int fd, pid_t child, int backchannel)
 {
-	int signo = selfpipe_read();
-	switch (signo) {
-	case -1: return -1;
-	case 0: return 0;
-	case SIGCHLD:
-		monitor_handle_sigchld(child, backchannel);
-	default:
-		/* Forward signal */
-		break;
+	for (;;) {
+		int signo = selfpipe_read();
+		if (signo == -1)
+			return -1;
+		if (signo == 0)
+			break;
+		switch (signo) {
+		case SIGCHLD:
+			monitor_handle_sigchld(child, backchannel);
+		default:
+			/* Forward signal */
+			break;
+		}
 	}
 	return 0;
 }
@@ -414,17 +418,21 @@ forward_sync_size(int from, int to)
 static int
 forward_handle_signal(int fd, int leader, int usertty)
 {
-	int signo = selfpipe_read();
-	switch (signo) {
-	case -1: return -1;
-	case 0: return 0;
-	case SIGWINCH:
-		forward_sync_size(usertty, leader);
-		return 0;
-	case SIGCHLD:
-	default:
-		/* XXX: Forward signal */
-		break;
+	for (;;) {
+		int signo = selfpipe_read();
+		if (signo == -1)
+			return -1;
+		if (signo == 0)
+			break;
+		switch (signo) {
+		case SIGWINCH:
+			forward_sync_size(usertty, leader);
+			return 0;
+		case SIGCHLD:
+		default:
+			/* XXX: Forward signal */
+			break;
+		}
 	}
 	return 0;
 }
