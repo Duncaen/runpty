@@ -55,13 +55,6 @@ sighandler(int signo)
 }
 
 static volatile sig_atomic_t got_sigttou;
-
-static void
-sigttou(int signo)
-{
-	(void) signo;
-	got_sigttou = 1;
-}
 static volatile sig_atomic_t got_sigttin;
 
 static void
@@ -69,6 +62,13 @@ sigttin(int signo)
 {
 	(void) signo;
 	got_sigttin = 1;
+}
+
+static void
+sigttou(int signo)
+{
+	(void) signo;
+	got_sigttou = 1;
 }
 
 static bool tty_initialized;
@@ -575,8 +575,15 @@ forward_recv_status(int fd, int *statusp)
 	return 0;
 }
 
+struct fwd {
+	char buf[4096];
+	size_t buflen;
+	struct pollfd *src;
+	struct pollfd *dst;
+};
+
 static int
-forward_read(struct pollfd *from, struct pollfd *to, char *buf, size_t bufsz, size_t *buflen)
+fwd_read(struct fwd *fwd)
 {
 	struct sigaction sa = {0}, osa;
 	ssize_t rd;
@@ -584,61 +591,75 @@ forward_read(struct pollfd *from, struct pollfd *to, char *buf, size_t bufsz, si
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_handler = sigttin;
-	got_sigttin = 0;
+	got_sigttou = 0;
 	sigaction(SIGTTIN, &sa, &osa);
-	rd = read(from->fd, buf + *buflen, bufsz - *buflen);
+	rd = read(fwd->src->fd, fwd->buf + fwd->buflen, sizeof(fwd->buf) - fwd->buflen);
 	saved_errno = errno;
 	sigaction(SIGTTIN, &osa, NULL);
 	errno = saved_errno;
 
 	if (rd == -1) {
-		if (errno == EINTR && got_sigttin) {
-		}
-		if (errno == EAGAIN)
-			return 0;
-		return -1;
-	} else if (rd == 0) {
-	} else {
-		*buflen += rd;
-		if (*buflen > 0) {
-			if (*buflen == bufsz)
-				from->events &= ~POLLIN;
-			to->events |= POLLOUT;
-			/* try a write if have new data */
-			to->revents |= POLLOUT;
-		}
-	}
-	return 0;
-}
-
-static int
-forward_write(struct pollfd *from, struct pollfd *to, char *buf, size_t bufsz, size_t *buflen)
-{
-	ssize_t wr = write(to->fd, buf, *buflen);
-	if (wr == -1) {
-		if (errno != EINTR && errno != EAGAIN)
+		if (errno != EAGAIN)
 			return -1;
+		rd = 0;
+	}
+	if (rd == 0) {
+		fwd->src->revents &= ~POLLIN;
 		return 0;
 	}
-	memmove(buf, buf + wr, *buflen - wr);
-	*buflen -= wr;
-	if (*buflen < bufsz) {
-		from->events |= POLLIN;
-		if (*buflen == 0)
-			to->events &= ~POLLOUT;
+	fwd->buflen += rd;
+	if (fwd->buflen > 0) {
+		if (fwd->buflen == sizeof(fwd->buf))
+			fwd->src->events &= ~POLLIN;
+		fwd->dst->events |= POLLOUT;
 	}
 	return 0;
 }
 
 static int
-forward_proxy(struct pollfd *from, struct pollfd *to, char *buf, size_t bufsz, size_t *buflen)
+fwd_write(struct fwd *fwd)
 {
-	if (from->revents & POLLIN) {
-		if (forward_read(from, to, buf, bufsz, buflen) == -1)
+	struct sigaction sa = {0}, osa;
+	ssize_t wr;
+	int saved_errno;
+
+	sigemptyset(&sa.sa_mask);
+	sa.sa_handler = sigttou;
+	got_sigttou = 0;
+	sigaction(SIGTTOU, &sa, &osa);
+	wr = write(fwd->dst->fd, fwd->buf, fwd->buflen);
+	saved_errno = errno;
+	sigaction(SIGTTOU, &osa, NULL);
+	errno = saved_errno;
+
+	if (wr == -1) {
+		if (errno != EAGAIN)
+			return -1;
+		wr = 0;
+	}
+	if (wr == 0) {
+		fwd->dst->revents &= ~POLLOUT;
+		return 0;
+	}
+	memmove(fwd->buf, fwd->buf + wr, fwd->buflen - wr);
+	fwd->buflen -= wr;
+	if (fwd->buflen < sizeof(fwd->buf)) {
+		fwd->src->events |= POLLIN;
+		if (fwd->buflen == 0)
+			fwd->dst->events &= ~POLLOUT;
+	}
+	return 0;
+}
+
+static int
+fwd(struct fwd *fwd)
+{
+	if (fwd->src->revents & POLLIN && fwd->buflen < sizeof(fwd->buf)) {
+		if (fwd_read(fwd) == -1)
 			return -1;
 	}
-	if (to->revents & POLLOUT) {
-		if (forward_write(from, to, buf, bufsz, buflen) == -1)
+	if (fwd->dst->revents & POLLOUT && fwd->buflen > 0) {
+		if (fwd_write(fwd) == -1)
 			return -1;
 	}
 	return 0;
@@ -647,12 +668,10 @@ forward_proxy(struct pollfd *from, struct pollfd *to, char *buf, size_t bufsz, s
 static _Noreturn void
 forward(int backchannel, int leader, int usertty, pid_t monitor)
 {
-	char inbuf[2048];
-	char oubuf[2048];
+	struct fwd infwd = {0};
+	struct fwd oufwd = {0};
 	struct pollfd pfds[4] = {0};
 	nfds_t nfds = sizeof(pfds)/sizeof(pfds[0]);
-	size_t inlen = 0;
-	size_t oulen = 0;
 	int status = 0;
 	int rc = 0;
 	pid_t cmdpid = -1;
@@ -677,6 +696,10 @@ forward(int backchannel, int leader, int usertty, pid_t monitor)
 		pfds[2].events |= POLLIN;
 		pfds[3].events |= POLLIN;
 	}
+	infwd.src = &pfds[2];
+	infwd.dst = &pfds[3];
+	oufwd.src = &pfds[3];
+	oufwd.dst = &pfds[2];
 	while (cmdpid != -1) {
 		if (poll(pfds, nfds, -1) == -1) {
 			if (errno != EINTR) {
@@ -708,15 +731,25 @@ forward(int backchannel, int leader, int usertty, pid_t monitor)
 				}
 			}
 		}
-		if (foreground) {
-			/* Proxy from usertty to leader */
-			if (forward_proxy(&pfds[2], &pfds[3], inbuf, sizeof(inbuf), &inlen) == -1)
+		if (fwd(&infwd) == -1 || fwd(&oufwd) == -1) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+	}
+
+	/* Drain the output buffer */
+	while (oufwd.buflen > 0) {
+		if (poll(&pfds[2], 1, -1) == -1) {
+			if (errno != EINTR)
 				break;
-			/* Proxy from leader to usertty */
-			if (forward_proxy(&pfds[3], &pfds[2], oubuf, sizeof(oubuf), &oulen) == -1)
-				break;
-		} else {
-			/* XXX: SIGTTOU SIGTTIN?? */
+			continue;
+		}
+		if (oufwd.dst->revents & POLLOUT) {
+			if (fwd_write(&oufwd) == -1) {
+				if (errno != EAGAIN)
+					break;
+			}
 		}
 	}
 
