@@ -46,9 +46,10 @@
 static int selfpipe[2];
 
 static void
-sighandler(int signo)
+sighandler_selfpipe(int signo)
 {
-	while (write(selfpipe[1], &signo, sizeof(signo)) == -1) {
+	unsigned char c = (unsigned char)signo;
+	while (write(selfpipe[1], &c, sizeof(c)) == -1) {
 		if (errno != EINTR)
 			break;
 	}
@@ -186,16 +187,25 @@ monitor_handle_sigchld(pid_t child, int backchannel)
 }
 
 static int
+selfpipe_read(void)
+{
+	unsigned char c = 0;
+	while (read(selfpipe[0], &c, sizeof(c)) == -1) {
+		if (errno == EINTR)
+			continue;
+		if (errno == EAGAIN)
+			break;
+		return -1;
+	}
+	return c;
+}
+
+static int
 monitor_handle_signal(int fd, pid_t child, int backchannel)
 {
-	int signo = 0;
-	while (read(fd, &signo, sizeof(signo)) == -1) {
-		if (errno != EINTR && errno != EAGAIN) {
-			perror("unable to read signal");
-			exit(1);
-		}
-	}
+	int signo = selfpipe_read();
 	switch (signo) {
+	case -1: return -1;
 	case 0: return 0;
 	case SIGCHLD:
 		monitor_handle_sigchld(child, backchannel);
@@ -277,7 +287,7 @@ exec_monitor(int argc, char *argv[], int usertty, int follower, int backchannel,
 	}
 
 	sigemptyset(&action.sa_mask);
-	action.sa_handler = sighandler;
+	action.sa_handler = sighandler_selfpipe;
 	action.sa_flags = SA_RESTART;
 	if (sigaction(SIGCHLD, &action, NULL) == -1) {
 		perror("unable to setup signal handler");
@@ -404,14 +414,9 @@ forward_sync_size(int from, int to)
 static int
 forward_handle_signal(int fd, int leader, int usertty)
 {
-	int signo = 0;
-	while (read(fd, &signo, sizeof(signo)) == -1) {
-		if (errno != EINTR && errno != EAGAIN) {
-			perror("unable to read signal");
-			exit(1);
-		}
-	}
+	int signo = selfpipe_read();
 	switch (signo) {
+	case -1: return -1;
 	case 0: return 0;
 	case SIGWINCH:
 		forward_sync_size(usertty, leader);
@@ -848,7 +853,7 @@ main(int argc, char *argv[])
 	}
 
 	sigemptyset(&action.sa_mask);
-	action.sa_handler = sighandler;
+	action.sa_handler = sighandler_selfpipe;
 	action.sa_flags = SA_RESTART;
 	if (sigaction(SIGCHLD, &action, NULL) == -1 ||
 	    sigaction(SIGWINCH, &action, NULL) == -1) {
