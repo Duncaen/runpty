@@ -818,6 +818,21 @@ main(int argc, char *argv[])
 	}
 	fcntl(leader, F_SETFL, O_NONBLOCK);
 
+	/* Setup the standard file descriptor for the command:
+	 * If our fd is a tty then it is set to the pty, otherwise
+	 * just pass the filedescriptor through.
+	 */
+	for (int fd = 0; fd <= 2; fd++) {
+		/* if the file descriptor is a tty, the pty is used */
+		if (isatty(fd) == 1) {
+			fds[fd] = follower;
+		} else {
+			if (fstat(fd, &st) == 0 && S_ISFIFO(st.st_mode))
+				pipeline = true;
+			fds[fd] = fd;
+		}
+	}
+
 	foreground = tcgetpgrp(usertty) == getpgrp();
 	if (term_copy(usertty, leader) == -1) {
 		perror("unable to copy terminal settings to pty");
@@ -836,21 +851,6 @@ main(int argc, char *argv[])
 	    sigaction(SIGWINCH, &action, NULL) == -1) {
 		perror("unable to setup signal handler");
 		exit(1);
-	}
-
-	/* Setup the standard file descriptor for the command:
-	 * If our fd is a tty then it is set to the pty, otherwise
-	 * just pass the filedescriptor through.
-	 */
-	for (int fd = 0; fd <= 2; fd++) {
-		/* if the file descriptor is a tty, the pty is used */
-		if (isatty(fd) == 1) {
-			fds[fd] = follower;
-		} else {
-			if (fstat(fd, &st) == 0 && S_ISFIFO(st.st_mode))
-				pipeline = true;
-			fds[fd] = fd;
-		}
 	}
 
 	switch ((monitor = fork())) {
