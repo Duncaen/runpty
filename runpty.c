@@ -14,6 +14,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+#define _GNU_SOURCE /* pipe2 */
 #include <sys/fcntl.h>
 #include <sys/poll.h>
 #include <sys/signal.h>
@@ -47,8 +48,10 @@ static int selfpipe[2];
 static void
 sighandler(int signo)
 {
-	while (write(selfpipe[1], &signo, sizeof(signo)) == -1 && errno == EINTR)
-		;
+	while (write(selfpipe[1], &signo, sizeof(signo)) == -1) {
+		if (errno != EINTR)
+			break;
+	}
 }
 
 static volatile sig_atomic_t got_sigttou;
@@ -268,9 +271,7 @@ exec_monitor(int argc, char *argv[], int usertty, int follower, int backchannel,
 		exit(1);
 	}
 
-	if (pipe(selfpipe) == -1 ||
-	   fcntl(selfpipe[0], F_SETFD, FD_CLOEXEC) == -1 ||
-	   fcntl(selfpipe[1], F_SETFD, FD_CLOEXEC) == -1) {
+	if (pipe2(selfpipe, O_NONBLOCK|O_CLOEXEC) == -1) {
 		perror("unable to create pipe");
 		exit(1);
 	}
@@ -500,7 +501,6 @@ forward_suspend(int signo, int usertty, int leader)
 {
 	struct sigaction sa = {0}, osa, osa_sigcont;
 	pid_t ppgrp;
-	enum cmd ret = 0;
 
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags = SA_RESTART;
@@ -760,9 +760,7 @@ main(int argc, char *argv[])
 	argc -= 1;
 	argv += 1;
 
-	if (pipe(selfpipe) == -1 ||
-	   fcntl(selfpipe[0], F_SETFD, FD_CLOEXEC) == -1 ||
-	   fcntl(selfpipe[1], F_SETFD, FD_CLOEXEC) == -1) {
+	if (pipe2(selfpipe, O_NONBLOCK|O_CLOEXEC) == -1) {
 		perror("unable to create pipe");
 		exit(1);
 	}
