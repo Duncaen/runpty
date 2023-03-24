@@ -72,8 +72,6 @@ sigttou(int signo)
 	got_sigttou = 1;
 }
 
-static bool tty_initialized;
-
 /*
  * Like tcsetattr() but restarts on EINTR _except_ for SIGTTOU.
  * Returns 0 on success or -1 on failure, setting errno.
@@ -239,10 +237,6 @@ monitor_handle_backchannel(int fd, int usertty, int follower, pid_t child, pid_t
 	switch (cmd) {
 	case CMD_CONT_FG:
 		/* Continue in foreground, grant it controlling tty. */
-		if (!tty_initialized) {
-			if (term_copy(usertty, follower))
-				tty_initialized = true;
-		}
 		if (tcsetpgrp(follower, child) == -1) {
 			/* XXX: debug log? */
 		}
@@ -271,9 +265,6 @@ exec_monitor(int argc, char *argv[], int usertty, int follower, int backchannel,
 	pid_t child;
 	pid_t pgrp;
 	int status;
-
-	if (!foreground)
-		tty_initialized = false;
 
 	/* Start a new session and becomes the leader so we get notified about SIGTSTP */
 	if (setsid() == -1) {
@@ -496,19 +487,15 @@ forward_resume(int usertty, int leader)
 {
 	if (check_foreground(usertty) == -1)
 		return false;
+	term_copy(usertty, leader);
 	if (foreground) {
 		/* Foreground process, set tty to raw mode. */
-		if (!tty_initialized) {
-			if (term_copy(usertty, leader) == 0)
-				tty_initialized = true;
-		}
 		if (term_raw(usertty))
 			ttymode = TERM_RAW;
 	} else {
 		/* Background process, no access to tty. */
 		ttymode = TERM_COOKED;
 	}
-	forward_sync_size(usertty, leader);
 	return true;
 }
 
@@ -857,7 +844,6 @@ main(int argc, char *argv[])
 	if (foreground) {
 		if (!pipeline && term_raw(usertty))
 			ttymode = TERM_RAW;
-		tty_initialized = true;
 	}
 
 	sigemptyset(&action.sa_mask);
