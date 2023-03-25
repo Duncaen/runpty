@@ -198,7 +198,7 @@ selfpipe_read(void)
 }
 
 static int
-monitor_handle_signal(int fd, pid_t child, int backchannel)
+monitor_handle_signal(pid_t child, int backchannel)
 {
 	for (;;) {
 		int signo = selfpipe_read();
@@ -361,7 +361,7 @@ exec_monitor(int argc, char *argv[], int follower, int backchannel, int fds[3], 
 			continue;
 		}
 		if (pfds[0].revents & POLLIN) {
-			monitor_handle_signal(pfds[0].fd, child, backchannel);
+			monitor_handle_signal(child, backchannel);
 		}
 		if (pfds[1].revents & POLLIN) {
 			monitor_handle_backchannel(pfds[1].fd, follower, child, pgrp);
@@ -406,7 +406,7 @@ forward_sync_size(int from, int to)
 }
 
 static int
-forward_handle_signal(int fd, int leader, int usertty)
+forward_handle_signal(int leader, int usertty)
 {
 	for (;;) {
 		int signo = selfpipe_read();
@@ -712,7 +712,7 @@ forward(int backchannel, int leader, int usertty, pid_t monitor)
 		}
 		/* Handle signals */
 		if (pfds[0].revents & POLLIN) {
-			forward_handle_signal(pfds[0].fd, leader, usertty);
+			forward_handle_signal(leader, usertty);
 		}
 		/* Handle waitpid status from monitor */
 		if (pfds[1].revents & POLLIN) {
