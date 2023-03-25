@@ -1,4 +1,4 @@
-CFLAGS?=-g -O2 -Wall -Wextra -pedantic
+CFLAGS?=-std=c99 -g -O2 -Wall -Wextra -pedantic
 
 PREFIX?=/usr/local
 BINDIR?=${PREFIX}/bin

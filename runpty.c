@@ -29,7 +29,6 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdnoreturn.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -256,7 +255,7 @@ monitor_handle_backchannel(int fd, int usertty, int follower, pid_t child, pid_t
 	return 0;
 }
 
-static _Noreturn void
+static __attribute__((noreturn)) void
 exec_monitor(int argc, char *argv[], int usertty, int follower, int backchannel, int fds[3], bool foreground)
 {
 	struct sigaction action;
@@ -668,7 +667,7 @@ fwd(struct fwd *fwd)
 	return 0;
 }
 
-static _Noreturn void
+static __attribute__((noreturn)) void
 forward(int backchannel, int leader, int usertty, pid_t monitor)
 {
 	struct fwd infwd = {0};
