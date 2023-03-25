@@ -223,7 +223,7 @@ enum cmd {
 };
 
 static int
-monitor_handle_backchannel(int fd, int usertty, int follower, pid_t child, pid_t pgrp)
+monitor_handle_backchannel(int fd, int follower, pid_t child, pid_t pgrp)
 {
 	enum cmd cmd = 0;
 	/* Wait until the proxy process notifies us about closing the follower fd */
@@ -256,7 +256,7 @@ monitor_handle_backchannel(int fd, int usertty, int follower, pid_t child, pid_t
 }
 
 static __attribute__((noreturn)) void
-exec_monitor(int argc, char *argv[], int usertty, int follower, int backchannel, int fds[3], bool foreground)
+exec_monitor(int argc, char *argv[], int follower, int backchannel, int fds[3], bool foreground)
 {
 	struct sigaction action;
 	struct pollfd pfds[2] = {0};
@@ -364,7 +364,7 @@ exec_monitor(int argc, char *argv[], int usertty, int follower, int backchannel,
 			monitor_handle_signal(pfds[0].fd, child, backchannel);
 		}
 		if (pfds[1].revents & POLLIN) {
-			monitor_handle_backchannel(pfds[1].fd, usertty, follower, child, pgrp);
+			monitor_handle_backchannel(pfds[1].fd, follower, child, pgrp);
 		}
 		if (pfds[1].revents & POLLHUP) {
 			/* parent died */
@@ -860,10 +860,11 @@ main(int argc, char *argv[])
 		exit(1);
 	case 0:
 		close(leader);
+		close(usertty);
 		close(selfpipe[0]);
 		close(selfpipe[1]);
 		close(sv[0]);
-		exec_monitor(argc, argv, usertty, follower, sv[1], fds, foreground);
+		exec_monitor(argc, argv, follower, sv[1], fds, foreground);
 		/* unreachable */
 	}
 	close(sv[1]);
