@@ -1,0 +1,23 @@
+RUNPTY(1)                   General Commands Manual                  RUNPTY(1)
+
+NAME
+     runpty – execute commands in a new pty
+
+SYNOPSIS
+     runpty command [args]
+
+DESCRIPTION
+     The runpty utility executes the given command with a new pty
+     (pseudo-terminal) as the controlling terminal.
+
+     Executing the command in a new pty mitigates the command from using
+     ioctl(2)'s like TIOCSTI and TIOCLINUX which can be used to execute
+     commands in the shell of the controlling terminal.
+
+EXIT STATUS
+     The runpty utility exits 0 on success, and >0 if an error occurs.
+
+SEE ALSO
+     ioctl(2), ioctl_tty(2), pty(7)
+
+Void Linux                      March 25, 2023                      Void Linux
